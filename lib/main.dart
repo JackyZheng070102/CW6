@@ -2,7 +2,6 @@ import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:firebase_auth/firebase_auth.dart';
 import 'package:firebase_core/firebase_core.dart';
 import 'package:flutter/material.dart';
-import 'auth_service.dart'; // Import the AuthService class
 
 void main() async {
   WidgetsFlutterBinding.ensureInitialized();
@@ -44,22 +43,25 @@ class LoginScreen extends StatefulWidget {
 class _LoginScreenState extends State<LoginScreen> {
   final TextEditingController _emailController = TextEditingController();
   final TextEditingController _passwordController = TextEditingController();
-  final AuthService _authService = AuthService();
+  final FirebaseAuth _auth = FirebaseAuth.instance;
 
   // Login function
   Future<void> _login() async {
     String email = _emailController.text;
     String password = _passwordController.text;
-    User? user = await _authService.signIn(email, password);
-    if (user != null) {
-      // Navigate to the task manager screen
-      Navigator.pushReplacement(
-        context,
-        MaterialPageRoute(builder: (context) => TaskListScreen()),
-      );
-    } else {
+    try {
+      UserCredential userCredential = await _auth.signInWithEmailAndPassword(
+          email: email, password: password);
+      if (userCredential.user != null) {
+        // Navigate to task list screen
+        Navigator.pushReplacement(
+          context,
+          MaterialPageRoute(builder: (context) => TaskListScreen()),
+        );
+      }
+    } catch (e) {
       ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text('Login failed')),
+        SnackBar(content: Text('Login failed: $e')),
       );
     }
   }
@@ -67,9 +69,7 @@ class _LoginScreenState extends State<LoginScreen> {
   @override
   Widget build(BuildContext context) {
     return Scaffold(
-      appBar: AppBar(
-        title: Text('Login'),
-      ),
+      appBar: AppBar(title: Text('Login')),
       body: Padding(
         padding: const EdgeInsets.all(16.0),
         child: Column(
@@ -111,22 +111,25 @@ class SignUpScreen extends StatefulWidget {
 class _SignUpScreenState extends State<SignUpScreen> {
   final TextEditingController _emailController = TextEditingController();
   final TextEditingController _passwordController = TextEditingController();
-  final AuthService _authService = AuthService();
+  final FirebaseAuth _auth = FirebaseAuth.instance;
 
   // Sign up function
   Future<void> _signUp() async {
     String email = _emailController.text;
     String password = _passwordController.text;
-    User? user = await _authService.signUp(email, password);
-    if (user != null) {
-      // Navigate to the task manager screen
-      Navigator.pushReplacement(
-        context,
-        MaterialPageRoute(builder: (context) => TaskListScreen()),
-      );
-    } else {
+    try {
+      UserCredential userCredential = await _auth.createUserWithEmailAndPassword(
+          email: email, password: password);
+      if (userCredential.user != null) {
+        // Navigate to task list screen
+        Navigator.pushReplacement(
+          context,
+          MaterialPageRoute(builder: (context) => TaskListScreen()),
+        );
+      }
+    } catch (e) {
       ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text('Sign up failed')),
+        SnackBar(content: Text('Sign up failed: $e')),
       );
     }
   }
@@ -134,9 +137,7 @@ class _SignUpScreenState extends State<SignUpScreen> {
   @override
   Widget build(BuildContext context) {
     return Scaffold(
-      appBar: AppBar(
-        title: Text('Sign Up'),
-      ),
+      appBar: AppBar(title: Text('Sign Up')),
       body: Padding(
         padding: const EdgeInsets.all(16.0),
         child: Column(
@@ -167,18 +168,124 @@ class _SignUpScreenState extends State<SignUpScreen> {
   }
 }
 
-class TaskListScreen extends StatelessWidget {
+class Task {
+  String id;
+  String title;
+  bool isCompleted;
+  String day;
+  String timeSlot;
+
+  Task({
+    required this.id,
+    required this.title,
+    this.isCompleted = false,
+    required this.day,
+    required this.timeSlot,
+  });
+
+  factory Task.fromMap(Map<String, dynamic> data, String documentId) {
+    return Task(
+      id: documentId,
+      title: data['title'] ?? '',
+      isCompleted: data['isCompleted'] ?? false,
+      day: data['day'] ?? '',
+      timeSlot: data['timeSlot'] ?? '',
+    );
+  }
+
+  Map<String, dynamic> toMap() {
+    return {
+      'title': title,
+      'isCompleted': isCompleted,
+      'day': day,
+      'timeSlot': timeSlot,
+    };
+  }
+}
+
+class TaskListScreen extends StatefulWidget {
+  @override
+  _TaskListScreenState createState() => _TaskListScreenState();
+}
+
+class _TaskListScreenState extends State<TaskListScreen> {
   final TextEditingController _taskController = TextEditingController();
+  final FirebaseAuth _auth = FirebaseAuth.instance;
   final FirebaseFirestore _firestore = FirebaseFirestore.instance;
 
-  Future<void> _addTask(String title) async {
-    // Add the task to Firestore
-    await _firestore.collection('tasks').add({
-      'title': title,
-      'isCompleted': false,
-      'day': 'Monday',
-      'timeSlot': '9 am - 10 am',
-    });
+  // Sign out function
+  Future<void> _signOut() async {
+    await _auth.signOut();
+    Navigator.pushReplacement(
+      context,
+      MaterialPageRoute(builder: (context) => LoginScreen()),
+    );
+  }
+
+  // Add task function
+  Future<void> _addTask(String title, String day, String timeSlot) async {
+    Task task = Task(
+      id: '',
+      title: title,
+      day: day,
+      timeSlot: timeSlot,
+    );
+    await _firestore.collection('tasks').add(task.toMap());
+  }
+
+  // Update task completion status
+  Future<void> _updateTask(String taskId, bool isCompleted) async {
+    await _firestore.collection('tasks').doc(taskId).update({'isCompleted': isCompleted});
+  }
+
+  // Delete task
+  Future<void> _deleteTask(String taskId) async {
+    await _firestore.collection('tasks').doc(taskId).delete();
+  }
+
+  // Edit Task Dialog for changing day and time slot
+  Future<void> _editTaskDialog(String taskId, String initialDay, String initialTimeSlot) async {
+    TextEditingController dayController = TextEditingController(text: initialDay);
+    TextEditingController timeSlotController = TextEditingController(text: initialTimeSlot);
+
+    return showDialog<void>(
+      context: context,
+      builder: (BuildContext context) {
+        return AlertDialog(
+          title: Text('Edit Task'),
+          content: Column(
+            children: [
+              TextField(
+                controller: dayController,
+                decoration: InputDecoration(labelText: 'Day (e.g., Monday)'),
+              ),
+              TextField(
+                controller: timeSlotController,
+                decoration: InputDecoration(labelText: 'Time Slot (e.g., 9 am - 10 am)'),
+              ),
+            ],
+          ),
+          actions: <Widget>[
+            TextButton(
+              child: Text('Cancel'),
+              onPressed: () {
+                Navigator.of(context).pop();
+              },
+            ),
+            TextButton(
+              child: Text('Save'),
+              onPressed: () {
+                _firestore.collection('tasks').doc(taskId).update({
+                  'day': dayController.text,
+                  'timeSlot': timeSlotController.text,
+                });
+                Navigator.of(context).pop();
+              },
+            ),
+          ],
+        );
+      },
+    );
   }
 
   @override
@@ -189,13 +296,7 @@ class TaskListScreen extends StatelessWidget {
         actions: [
           IconButton(
             icon: Icon(Icons.exit_to_app),
-            onPressed: () async {
-              await FirebaseAuth.instance.signOut();
-              Navigator.pushReplacement(
-                context,
-                MaterialPageRoute(builder: (context) => LoginScreen()),
-              );
-            },
+            onPressed: _signOut,
           ),
         ],
       ),
@@ -210,7 +311,7 @@ class TaskListScreen extends StatelessWidget {
           ),
           ElevatedButton(
             onPressed: () {
-              _addTask(_taskController.text);
+              _addTask(_taskController.text, 'Monday', '9 am - 10 am');
               _taskController.clear();
             },
             child: Text('Add Task'),
@@ -223,21 +324,60 @@ class TaskListScreen extends StatelessWidget {
                   return Center(child: CircularProgressIndicator());
                 }
 
-                var tasks = snapshot.data!.docs;
+                var tasks = snapshot.data!.docs.map((doc) {
+                  return Task.fromMap(doc.data() as Map<String, dynamic>, doc.id);
+                }).toList();
+
+                Map<String, List<Task>> groupedTasks = {};
+                for (var task in tasks) {
+                  if (!groupedTasks.containsKey(task.day)) {
+                    groupedTasks[task.day] = [];
+                  }
+                  groupedTasks[task.day]!.add(task);
+                }
+
                 return ListView(
-                  children: tasks.map((doc) {
-                    var task = doc.data() as Map<String, dynamic>;
-                    return ListTile(
-                      title: Text(task['title']),
-                      subtitle: Text(task['timeSlot']),
-                      trailing: Checkbox(
-                        value: task['isCompleted'],
-                        onChanged: (value) {
-                          _firestore.collection('tasks').doc(doc.id).update({
-                            'isCompleted': value,
-                          });
-                        },
-                      ),
+                  children: groupedTasks.entries.map((entry) {
+                    String day = entry.key;
+                    List<Task> tasksForDay = entry.value;
+
+                    return ExpansionTile(
+                      title: Text(day),
+                      children: tasksForDay.map((task) {
+                        return ListTile(
+                          title: Text(
+                            task.title,
+                            style: TextStyle(
+                                decoration: task.isCompleted
+                                    ? TextDecoration.lineThrough
+                                    : TextDecoration.none),
+                          ),
+                          subtitle: Text(task.timeSlot),
+                          trailing: Row(
+                            mainAxisSize: MainAxisSize.min,
+                            children: [
+                              Checkbox(
+                                value: task.isCompleted,
+                                onChanged: (value) {
+                                  _updateTask(task.id, value ?? false);
+                                },
+                              ),
+                              IconButton(
+                                icon: Icon(Icons.edit),
+                                onPressed: () {
+                                  _editTaskDialog(task.id, task.day, task.timeSlot);
+                                },
+                              ),
+                              IconButton(
+                                icon: Icon(Icons.delete),
+                                onPressed: () {
+                                  _deleteTask(task.id);
+                                },
+                              ),
+                            ],
+                          ),
+                        );
+                      }).toList(),
                     );
                   }).toList(),
                 );
